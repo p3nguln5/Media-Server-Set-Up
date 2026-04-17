@@ -1,39 +1,47 @@
 services:
-  gluetun: # See glutune's github page for more VPN service options: https://github.com/qdm12/gluetun
+  gluetun: # See gluetun's github page for more VPN service options: https://github.com/qdm12/gluetun
     image: qmcgaw/gluetun
     container_name: gluetun
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     ports:
-      - 6881:6881
-      - 6881:6881/udp
-      - 8085:8085 #qbittorrent
-      - 9696:9696 #prowlarr
-      - 8989:8989 #sonarr
-      - 7878:7878 #radarr
-      - 5055:5055 #overseerr
+      - 6881:6881              # qBittorrent torrent port (tcp)
+      - 6881:6881/udp          # qBittorrent torrent port (udp)
+      - 8085:8085              # qBittorrent WebUI
+      - 9696:9696              # Prowlarr
+      - 8989:8989              # Sonarr
+      - 7878:7878              # Radarr
+      - 5055:5055              # Overseerr
     volumes:
-      - /home/media/docker/mediaServer/gluetun:/gluetun
+      - ./gluetun:/gluetun
     environment:
-      - VPN_SERVICE_PROVIDER=mullvad
-      - VPN_TYPE=openvpn
-      - OPENVPN_USER= # Your Mullvad account ID
-      - SERVER_COUNTRIES: # Country for VPN (comma separated)
-      - SERVER_CITIES= # City for VPN (comma separated)
+      - VPN_SERVICE_PROVIDER=mullvad       # Change to your VPN provider
+      - VPN_TYPE=wireguard                 # Mullvad deprecated OpenVPN Jan 2026 — use WireGuard
+      - WIREGUARD_PRIVATE_KEY=             # Your WireGuard private key
+      - WIREGUARD_ADDRESSES=               # Your WireGuard address (IPv4 ONLY, e.g., 10.x.x.x/32 — strip any IPv6 fc00:: address or gluetun will error)
+      # - SERVER_COUNTRIES=                # Country for VPN (comma separated)
+      # - SERVER_CITIES=                   # City for VPN (comma separated)
+      - TZ=America/Chicago                 # Change to your timezone
     restart: unless-stopped
 
   flaresolverr:
-    # DockerHub mirror flaresolverr/flaresolverr:latest
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     network_mode: "service:gluetun"
+    shm_size: 2gb                          # Default Docker /dev/shm is 64MB — too small for headless Chromium, causes crashes
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_HTML=${LOG_HTML:-false}
       - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
-      - TZ=Etc/UTC
+      - BROWSER_TIMEOUT=80000
+      - TZ=America/Chicago
+    depends_on:
+      gluetun:
+        condition: service_healthy          # CRITICAL: wait for VPN tunnel to be UP, not just container running
     restart: unless-stopped
-    
+
   plex:
     image: lscr.io/linuxserver/plex:latest
     container_name: plex
@@ -41,13 +49,13 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
       - VERSION=docker
-     # - PLEX_CLAIM= #optional
+      # - PLEX_CLAIM=                      # Optional — or claim via SSH tunnel (see README)
     volumes:
-      - /home/media/docker/mediaServer/plex:/config
-      - /path/to/mnt/folder/tv:/tv
-      - /path/to/mnt/folder/movies:/movies
+      - ./plex:/config
+      - /path/to/media/tv:/tv
+      - /path/to/media/movies:/movies
     restart: unless-stopped
 
   qbittorrent:
@@ -55,16 +63,17 @@ services:
     container_name: qbittorrent
     network_mode: "service:gluetun"
     environment:
-      - PUID=0
-      - PGID=0
-      - TZ=Etc/UTC
+      - PUID=1000                          # Match the UID that owns your media files — do NOT use 0 (root)
+      - PGID=1000                          # Match the GID that owns your media files — do NOT use 0 (root)
+      - TZ=America/Chicago
       - WEBUI_PORT=8085
     volumes:
-      - /home/media/docker/mediaServer/qbit:/config
-      - /path/to/media/downlaods:/downloads #optional
+      - ./qbit:/config
+      - /path/to/media/downloads:/downloads
     depends_on:
-      - gluetun
-    restart: always
+      gluetun:
+        condition: service_healthy          # CRITICAL: wait for VPN tunnel to be UP, not just container running
+    restart: unless-stopped
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
@@ -73,9 +82,12 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
     volumes:
-      - /home/media/docker/mediaServer/prowlarr:/config
+      - ./prowlarr:/config
+    depends_on:
+      gluetun:
+        condition: service_healthy
     restart: unless-stopped
 
   sonarr:
@@ -83,13 +95,16 @@ services:
     container_name: sonarr
     network_mode: "service:gluetun"
     environment:
-      - PUID=0
-      - PGID=0
-      - TZ=Etc/UTC
+      - PUID=1000                          # Match your media file owner UID
+      - PGID=1000                          # Match your media file owner GID
+      - TZ=America/Chicago
     volumes:
-      - /home/media/docker/mediaServer/sonarr:/config
-      - /path/to/mnt/folder/tv:/tv #optional
-      - /path/to/media/downloads/:/downloads #optional
+      - ./sonarr:/config
+      - /path/to/media/tv:/tv
+      - /path/to/media/downloads:/downloads
+    depends_on:
+      gluetun:
+        condition: service_healthy
     restart: unless-stopped
 
   radarr:
@@ -97,13 +112,16 @@ services:
     container_name: radarr
     network_mode: "service:gluetun"
     environment:
-      - PUID=0
-      - PGID=0
-      - TZ=Etc/UTC
+      - PUID=1000                          # Match your media file owner UID
+      - PGID=1000                          # Match your media file owner GID
+      - TZ=America/Chicago
     volumes:
-      - /home/media/docker/mediaServer/radarr:/config
-      - /path/to/mnt/folder/movies:/movies #optional
-      - /path/to/media/downloads:/downloads #optional
+      - ./radarr:/config
+      - /path/to/media/movies:/movies
+      - /path/to/media/downloads:/downloads
+    depends_on:
+      gluetun:
+        condition: service_healthy
     restart: unless-stopped
 
   overseerr:
@@ -113,7 +131,10 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
     volumes:
-      - /home/media/docker/mediaServer/overseerr:/config
+      - ./overseerr:/config
+    depends_on:
+      gluetun:
+        condition: service_healthy
     restart: unless-stopped

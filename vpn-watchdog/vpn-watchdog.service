@@ -1,0 +1,8 @@
+[Unit]
+Description=VPN watchdog — restart qBittorrent on gluetun IP change
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/path/to/your/compose/dir/vpn-watchdog.sh
+User=your-user
